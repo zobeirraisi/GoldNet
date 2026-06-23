@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+*.egg-info
+
+# Virtual environment
+.venv/
+
+# Model weights (downloaded via fetch_weights.sh)
+*.pth
+*.pt
+*.ckpt
+code/weights/
+weights/
+
+# Dataset symlink / local copy (dataset lives in gold/ at repo root)
+code/gold/
+
+# Third-party repos (cloned separately)
+code/external/
+
+# Experiment outputs
+code/results/*.csv
+code/results/*.tex
+
+# Claude Code
+.claude/

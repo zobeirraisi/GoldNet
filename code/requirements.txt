@@ -1,0 +1,18 @@
+# NOTE: GPU is CUDA 11.8. Install torch/torchvision from the cu118 index:
+#   uv pip install torch==2.4.1+cu118 torchvision==0.19.1+cu118 \
+#       --index-url https://download.pytorch.org/whl/cu118 \
+#       --extra-index-url https://pypi.org/simple
+# Then install the rest of this file normally.
+torch>=2.0.1
+torchvision>=0.15.2
+numpy>=1.24.0
+Pillow>=9.5.0
+scikit-learn>=1.3.0
+scikit-image>=0.21.0
+scipy>=1.11.0
+opencv-python>=4.8.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+pandas>=2.0.0
+timm>=0.9.0
+joblib>=1.3.0

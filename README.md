@@ -44,8 +44,6 @@ code/        # training and evaluation pipeline (PyTorch)
 weights/     # pretrained backbone checkpoints and trained model weights
 ```
 
-> Note: adjust the names below to match the scripts you upload.
-
 The canonical evaluation uses 5-fold stratified cross-validation, AdamW, AMP
 (bfloat16), and a freeze-then-unfreeze fine-tuning schedule.
 
