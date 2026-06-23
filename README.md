@@ -96,8 +96,13 @@ the best overall configuration.
 
 ## License
 
-Add a license before release. A common choice is CC BY 4.0 for the dataset and
-MIT for the code; pick whatever fits your intended use.
+The code and scripts in this repository are released under the
+[MIT License](LICENSE).
+
+The dataset (`gold/` directory) is released under the
+[Creative Commons Attribution 4.0 International License (CC BY 4.0)](LICENSE-DATA).
+You are free to use, share, and adapt the data for any purpose, provided you
+give appropriate credit and cite the paper above.
 
 ## Contact
 
