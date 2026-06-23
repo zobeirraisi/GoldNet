@@ -1,11 +1,6 @@
 """
 dataset.py
 ----------
-Gold Jewelry Authentication — Dataset construction, item-level splitting,
-preprocessing pipeline, and augmentation.
-
-Paper: "EfficientNet-Based Non-Destructive Visual Authentication of Gold Jewelry"
-Target journal: MDPI Sensors
 """
 
 import os
