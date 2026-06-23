@@ -37,22 +37,23 @@ if [ -s "$DEST/iFormer_s.pth" ] && [ ! -s "$DEST/iFormer_s_clean.pth" ]; then
     echo "[warn] run scripts/sanitize_iformer_ckpt.py manually to create iFormer_s_clean.pth"
 fi
 
-# --- 2. trained GoldNet checkpoints (this project's release assets) ------------
-# TODO: create a GitHub release on github.com/zobeirraisi/GoldNet, attach the
-# trained .pth files, and set RELEASE_BASE to its asset download base URL.
-RELEASE_BASE="https://github.com/zobeirraisi/GoldNet/releases/download/v1.0"
+# --- 2. trained GoldNet checkpoints (hosted on Hugging Face) -------------------
+HF_BASE="https://huggingface.co/zobeir/GoldNet/resolve/main/weights"
 
 TRAINED=(
   "GoldFormer_best.pth"
-  "Swin_T_final.pth"
+  "Swin_T_best.pth"
   "ViT_B16_best.pth"
   "ResNet101_best.pth"
-  # add the remaining baselines if you publish them:
-  # ResNet18_best.pth ResNet50_best.pth VGG16_best.pth DenseNet121_best.pth
-  # EfficientNet_B0_best.pth EfficientNet_B3_best.pth MobileNet_V2_best.pth
+  "ResNet50_best.pth"
+  "ResNet18_best.pth"
+  "DenseNet121_best.pth"
+  "EfficientNet_B3_best.pth"
+  "EfficientNet_B0_best.pth"
+  "MobileNet_V2_best.pth"
 )
 for f in "${TRAINED[@]}"; do
-  get "$f" "$RELEASE_BASE/$f"
+  get "$f" "$HF_BASE/$f"
 done
 
 # --- note: natten (required only for OverLoCK-XT) -----------------------------
