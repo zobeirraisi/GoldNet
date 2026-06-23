@@ -1,19 +1,7 @@
 """
 figures.py
 ----------
-Gold Jewelry Authentication — All manuscript figures.
 
-Generates publication-quality figures in PDF + PNG format
-matching the academic style of MDPI Sensors.
-
-Figures produced:
-  Fig 1 — Confusion matrix (EfficientNet-B0, best fold)
-  Fig 2 — Reliability diagrams before/after temperature scaling (2×4)
-  Fig 3 — Accuracy–coverage trade-off curve
-  Fig 4 — Cross-domain robustness grouped bar chart
-  Fig 5 — Per-subtype horizontal bar chart
-  Fig 6 — Training curves (loss + accuracy)
-  Fig 7 — ROC curves for all models
 """
 
 from __future__ import annotations
