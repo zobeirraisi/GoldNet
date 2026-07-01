@@ -8,6 +8,7 @@ Implements:
   Transformer  : ViT-B/16
   Recent (2025): iFormer-S, OverLoCK-XT   (loaded from code/external/, see below)
   Classical    : LBP + SVM,  Haralick + SVM
+  Proposed     : GoldFormer (ResNet-50 + Swin-T dual-stream, gated by TAAG)
 
 Each deep model is wrapped in GoldAuthModel which handles:
   - ImageNet pretrained weight loading
@@ -387,6 +388,275 @@ class GoldAuthModel(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GoldFormer: hybrid dual-stream CNN+Swin architecture with TAAG
+#
+# Does not go through GoldAuthModel: its forward() returns (logits, gamma) —
+# gamma is the TAAG gate activation, kept for interpretability — rather than
+# bare logits, and its two backbones (ResNet-50 + Swin-T) are fused rather
+# than swapped in behind a single `.backbone`. Build with
+# `build_model("goldformer")`, then `model.load_state_dict(torch.load(
+# "external/weights/GoldFormer_best.pth", weights_only=True))` to reproduce
+# the paper's checkpoint.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TextureAwareAttentionGate(nn.Module):
+    """
+    TAAG — Texture-Aware Attention Gate.
+
+    Uses per-channel RMS texture energy from a Laplacian-of-Gaussian
+    depthwise convolution on CNN feature maps to gate each dimension of
+    the Swin Transformer feature vector.
+
+    Args:
+        cnn_channels  : number of CNN feature map channels (default 2048)
+        swin_dim      : Swin feature dimensionality (default 768)
+        reduction     : bottleneck reduction ratio in gate MLP (default 16)
+    """
+
+    def __init__(self,
+                 cnn_channels: int = 2048,
+                 swin_dim: int = 768,
+                 reduction: int = 16,
+                 ablation: str = "full") -> None:
+        super().__init__()
+
+        # ── Ablation switch (Reviewer 1 round-2, Comment 3) ────────────────
+        # "full"        : LoG prior + per-channel gate + learned residual (default)
+        # "no_taag"     : disable gating; pass raw Swin features through
+        # "no_log"      : random-init learnable texture conv (no LoG prior)
+        # "scalar_gate" : single scalar gate per sample (no per-channel control)
+        # "mult_only"   : purely multiplicative gate (no learned residual)
+        assert ablation in {"full", "no_taag", "no_log",
+                             "scalar_gate", "mult_only"}, ablation
+        self.ablation = ablation
+        self.swin_dim = swin_dim
+
+        # Depthwise texture filter for texture energy estimation
+        self.texture_conv = nn.Conv2d(
+            cnn_channels, cnn_channels,
+            kernel_size=3, padding=1,
+            groups=cnn_channels, bias=False,
+        )
+        # The LoG prior is the design under test; ablation "no_log" leaves the
+        # depthwise conv at its default (random) initialisation instead.
+        if ablation != "no_log":
+            self._init_log_kernel()
+
+        self.texture_bn = nn.BatchNorm2d(cnn_channels)
+
+        # Two-layer bottleneck MLP: cnn_channels → hidden → gate_dim.
+        # A scalar gate emits one value per sample; otherwise one per Swin dim.
+        gate_dim = 1 if ablation == "scalar_gate" else swin_dim
+        hidden = max(cnn_channels // reduction, 64)
+        self.gate_mlp = nn.Sequential(
+            nn.Linear(cnn_channels, hidden, bias=False),
+            nn.LayerNorm(hidden),
+            nn.GELU(),
+            nn.Linear(hidden, gate_dim, bias=False),
+        )
+
+        # Learnable residual scale — initialised to 0 for training stability
+        # At init GoldFormer == plain Swin-T; gate grows as alpha learns
+        self.alpha = nn.Parameter(torch.zeros(1))
+
+    def _init_log_kernel(self) -> None:
+        """
+        Initialise the depthwise conv with a 3×3 LoG kernel.
+        This approximates the centre-surround response that underlies LBP.
+        """
+        log_kernel = torch.tensor(
+            [[0., -1.,  0.],
+             [-1.,  4., -1.],
+             [0., -1.,  0.]], dtype=torch.float32
+        )
+        # Shape: (out_channels, in_channels/groups, kH, kW)
+        weight = log_kernel.unsqueeze(0).unsqueeze(0)
+        weight = weight.expand(self.texture_conv.weight.shape)
+        with torch.no_grad():
+            self.texture_conv.weight.copy_(weight)
+
+    def forward(self,
+                cnn_feat_map: torch.Tensor,
+                swin_feat: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            cnn_feat_map : (B, C, H, W)  — spatial CNN feature map
+            swin_feat    : (B, D)         — pooled Swin feature vector
+
+        Returns:
+            gated_swin   : (B, D)         — texture-gated Swin features
+        """
+        # ── Ablation: disable gating entirely (raw Swin features) ──────────
+        if self.ablation == "no_taag":
+            # Return a neutral gamma (0.5) so the gate sparsity loss, whose
+            # target is rho=0.5, contributes nothing for this variant.
+            gamma = torch.full((swin_feat.size(0), self.swin_dim), 0.5,
+                               device=swin_feat.device, dtype=swin_feat.dtype)
+            return swin_feat, gamma
+
+        # ── Texture energy estimation ──────────────────────────────────────
+        # Depthwise LoG convolution + BN
+        tex = self.texture_conv(cnn_feat_map)      # (B, C, H, W)
+        tex = self.texture_bn(tex)                 # (B, C, H, W)
+
+        # Per-channel RMS energy: sqrt(mean(response^2)) over spatial dims
+        energy = tex.pow(2).mean(dim=[2, 3]).sqrt()  # (B, C)
+
+        # ── Gate computation ───────────────────────────────────────────────
+        gate_logits = self.gate_mlp(energy)          # (B, D) or (B, 1)
+        gamma       = torch.sigmoid(gate_logits)     # ∈ [0,1]
+        if self.ablation == "scalar_gate":
+            gamma = gamma.expand(-1, self.swin_dim)  # (B, 1) → (B, D)
+
+        # ── Gated feature ──────────────────────────────────────────────────
+        if self.ablation == "mult_only":
+            # Purely multiplicative gate, no learned residual scale.
+            gated = swin_feat * gamma                # (B, D)
+        else:
+            # Default: learned residual scale (alpha=0 at init → identity).
+            gated = swin_feat + self.alpha * (swin_feat * gamma)  # (B, D)
+
+        return gated, gamma  # return gamma for interpretability
+
+
+class GoldFormer(nn.Module):
+    """
+    GoldFormer: Hybrid Dual-Stream Gold Authentication Network.
+
+    Streams:
+      CNN   → ResNet-50 (stages 1-2 frozen, 3-4 fine-tuned) → 2048-dim
+      Swin  → Swin-T (fully fine-tuned)                      → 768-dim
+      TAAG  → gates Swin features with CNN texture energy
+      Fuse  → concat + residual projection → 512-dim
+      Head  → Linear → 2 logits
+    """
+
+    CNN_DIM  = 2048
+    SWIN_DIM = 768
+    FUSE_DIM = 512
+    NUM_CLS  = 2
+
+    def __init__(self,
+                 dropout: float = 0.35,
+                 taag_reduction: int = 16,
+                 ablation: str = "full") -> None:
+        super().__init__()
+        self.ablation = ablation
+
+        # ── CNN Stream (ResNet-50) ─────────────────────────────────────────
+        resnet = models.resnet50(
+            weights=models.ResNet50_Weights.IMAGENET1K_V1)
+
+        # Freeze stem + stages 1-2; fine-tune stages 3-4
+        frozen_layers = [
+            resnet.conv1, resnet.bn1,
+            resnet.layer1, resnet.layer2,
+        ]
+        for layer in frozen_layers:
+            for p in layer.parameters():
+                p.requires_grad = False
+
+        # We keep layer3, layer4, and avgpool; drop the FC head
+        self.cnn_stem   = nn.Sequential(
+            resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
+        self.cnn_stage1 = resnet.layer1   # frozen
+        self.cnn_stage2 = resnet.layer2   # frozen
+        self.cnn_stage3 = resnet.layer3   # fine-tuned
+        self.cnn_stage4 = resnet.layer4   # fine-tuned → spatial feat map
+        self.cnn_gap    = nn.AdaptiveAvgPool2d(1)
+
+        # ── Swin Stream ────────────────────────────────────────────────────
+        swin = models.swin_t(
+            weights=models.Swin_T_Weights.IMAGENET1K_V1)
+        # Remove the Swin classification head
+        self.swin_features = swin.features   # patch embed + 4 stages
+        self.swin_norm      = swin.norm
+        self.swin_pool      = swin.avgpool
+
+        # ── Texture-Aware Attention Gate ───────────────────────────────────
+        self.taag = TextureAwareAttentionGate(
+            cnn_channels=self.CNN_DIM,
+            swin_dim=self.SWIN_DIM,
+            reduction=taag_reduction,
+            ablation=ablation,
+        )
+
+        # ── Cross-Stream Fusion (residual) ─────────────────────────────────
+        fuse_in = self.CNN_DIM + self.SWIN_DIM   # 2048 + 768 = 2816
+        self.fuse_main = nn.Sequential(
+            nn.Linear(fuse_in, self.FUSE_DIM, bias=False),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(self.FUSE_DIM),
+        )
+        # Linear shortcut for residual connection (no bias, no activation)
+        self.fuse_shortcut = nn.Linear(fuse_in, self.FUSE_DIM, bias=False)
+
+        # ── Classification Head ────────────────────────────────────────────
+        self.head = nn.Sequential(
+            nn.LayerNorm(self.FUSE_DIM),
+            nn.Dropout(dropout),
+            nn.Linear(self.FUSE_DIM, self.NUM_CLS),
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    def _cnn_forward(self,
+                     x: torch.Tensor
+                     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            feat_map : (B, 2048, h, w)  spatial feature map from layer4
+            feat_vec : (B, 2048)        globally pooled CNN descriptor
+        """
+        x = self.cnn_stem(x)
+        x = self.cnn_stage1(x)
+        x = self.cnn_stage2(x)
+        x = self.cnn_stage3(x)
+        feat_map = self.cnn_stage4(x)                   # (B, 2048, h, w)
+        feat_vec = self.cnn_gap(feat_map).flatten(1)    # (B, 2048)
+        return feat_map, feat_vec
+
+    def _swin_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Returns:
+            feat_vec : (B, 768)  globally pooled Swin descriptor
+        """
+        x = self.swin_features(x)   # (B, H', W', 768) — NHWC layout
+        x = self.swin_norm(x)
+        # swin_pool expects (B, C, H, W) — permute before, squeeze after
+        x = x.permute(0, 3, 1, 2)  # (B, 768, H', W')
+        x = self.swin_pool(x)       # (B, 768, 1, 1)
+        x = x.flatten(1)            # (B, 768)
+        return x
+
+    def forward(self, x: torch.Tensor
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x : (B, 3, H, W) input image batch
+
+        Returns:
+            logits : (B, 2)   classification logits
+            gamma  : (B, 768) TAAG gate activations (for interpretability)
+        """
+        # ── Dual-stream feature extraction ────────────────────────────────
+        cnn_map, cnn_vec = self._cnn_forward(x)     # (B,2048,h,w), (B,2048)
+        swin_vec         = self._swin_forward(x)    # (B, 768)
+
+        # ── TAAG gating ────────────────────────────────────────────────────
+        gated_swin, gamma = self.taag(cnn_map, swin_vec)  # (B,768), (B,768)
+
+        # ── Cross-stream fusion ────────────────────────────────────────────
+        concat = torch.cat([cnn_vec, gated_swin], dim=1)  # (B, 2816)
+        h = self.fuse_main(concat) + self.fuse_shortcut(concat)  # (B, 512)
+
+        # ── Classification ─────────────────────────────────────────────────
+        logits = self.head(h)   # (B, 2)
+
+        return logits, gamma
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Classical texture baselines
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -517,8 +787,15 @@ class HaralickSVMClassifier:
 # Model factory
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_model(arch: str, pretrained: bool = True) -> GoldAuthModel:
-    """Convenience factory for GoldAuthModel."""
+def build_model(arch: str, pretrained: bool = True):
+    """
+    Convenience factory. Returns a GoldAuthModel for baseline architectures,
+    or a raw GoldFormer module for arch == "goldformer" — GoldFormer's
+    forward() returns a (logits, gamma) tuple rather than bare logits, so it
+    isn't wrapped in GoldAuthModel's uniform interface.
+    """
+    if arch == "goldformer":
+        return GoldFormer(ablation="full")
     return GoldAuthModel(arch=arch, pretrained=pretrained)
 
 

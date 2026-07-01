@@ -4,8 +4,10 @@ GoldNet is a public benchmark dataset and code release for visual authentication
 of genuine versus counterfeit gold items from ordinary smartphone photographs. It
 accompanies the paper:
 
-> **GoldFormer: A Texture-Aware Vision Transformer-based Algorithm for Detecting
-> Near-Identical Images**, Z. Raisi, *Algorithms* (MDPI), under review.
+> **GoldFormer: A Texture-Aware Vision Transformer-Based Algorithm for Detecting
+> Near-Identical Images**, Z. Raisi, *Algorithms*, 2026, 19(7), 530.
+> DOI: [10.3390/a19070530](https://doi.org/10.3390/a19070530). Open access
+> (CC BY 4.0).
 
 The task is fine-grained: high-quality counterfeits closely replicate the surface
 texture, hallmark engravings, color, and geometry of genuine pieces, so the two
@@ -63,32 +65,51 @@ python run_new_models.py
 python run_svm_only.py
 ```
 
-## Results (5-fold cross-validation)
+`models.py` includes the GoldFormer/TAAG architecture. To reproduce the
+published model from the released checkpoint:
+
+```python
+import torch
+from models import build_model
+
+model = build_model("goldformer")
+state = torch.load("weights/GoldFormer_best.pth", map_location="cpu", weights_only=True)
+model.load_state_dict(state)   # strict — exact match with the released checkpoint
+model.eval()
+logits, gamma = model(images)  # gamma = TAAG gate activations, for interpretability
+```
+
+## Results (5-fold cross-validation, matched 224×224 resolution)
 
 | Model | Accuracy (%) | F1 |
 |---|---|---|
 | Human experts (baseline) | 89.80 | -- |
 | ResNet-101 | 92.29 ± 1.01 | 0.9228 |
+| Swin-T | 93.65 ± 0.67 | 0.9365 |
 | ViT-B/16 | 94.31 ± 0.94 | 0.9431 |
-| Swin-T | 94.31 ± 0.78 | 0.9431 |
-| **GoldFormer (ours)** | **94.69 ± 0.79** | **0.9469** |
-| Soft-voting ensemble (best overall) | **95.39** | **0.9539** |
+| Soft-voting ensemble | 94.92 | 0.9492 |
+| **GoldFormer (ours)** | **95.02 ± 0.75** | **0.9502** |
 
-GoldFormer is statistically tied with the strongest individual backbone, Swin-T
-(paired McNemar p = 0.48); its contribution is built-in, attribution-free texture
-interpretability rather than higher raw accuracy. The training-free ensemble is
-the best overall configuration.
+GoldFormer is the best single model and beats the ensemble; it is statistically
+tied with the strongest individual backbone, ViT-B/16 (paired McNemar p = 0.228),
+and significantly beats its own Swin-T backbone (p = 0.014) while using half
+ViT-B/16's FLOPs (8.6 vs 16.9 GFLOPs) and fewer parameters (54.3M vs 86.6M). Its
+contribution is competitive accuracy together with built-in, attribution-free
+texture-gate interpretability.
 
 ## Citation
 
 ```bibtex
 @article{raisi2026goldformer,
-  title   = {GoldFormer: A Texture-Aware Vision Transformer-based Algorithm
+  title   = {GoldFormer: A Texture-Aware Vision Transformer-Based Algorithm
              for Detecting Near-Identical Images},
   author  = {Raisi, Zobeir},
   journal = {Algorithms},
+  volume  = {19},
+  number  = {7},
+  pages   = {530},
   year    = {2026},
-  note    = {Under review}
+  doi     = {10.3390/a19070530}
 }
 ```
 
