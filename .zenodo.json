@@ -1,0 +1,30 @@
+{
+  "title": "GoldNet: Benchmark Dataset and Code for Detecting Near-Identical Counterfeit Gold Images",
+  "description": "GoldNet is a public benchmark dataset (2,127 smartphone photographs of authentic vs. counterfeit gold items) and PyTorch training/evaluation code accompanying the paper 'GoldFormer: A Texture-Aware Vision Transformer-Based Algorithm for Detecting Near-Identical Images' (Algorithms, 2026, 19(7), 530, DOI: 10.3390/a19070530). Trained model weights are hosted separately on Hugging Face (huggingface.co/zobeir/GoldNet).",
+  "creators": [
+    {
+      "name": "Raisi, Zobeir",
+      "affiliation": "Chabahar Maritime University",
+      "orcid": "0000-0002-1591-4492"
+    }
+  ],
+  "license": "MIT",
+  "upload_type": "software",
+  "access_right": "open",
+  "keywords": [
+    "counterfeit detection",
+    "fine-grained recognition",
+    "vision transformer",
+    "gold",
+    "image classification",
+    "deep learning",
+    "benchmark dataset"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.3390/a19070530",
+      "relation": "isSupplementTo",
+      "resource_type": "publication-article"
+    }
+  ]
+}
