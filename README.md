@@ -1,5 +1,7 @@
 # GoldNet
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21123708.svg)](https://doi.org/10.5281/zenodo.21123708)
+
 GoldNet is a public benchmark dataset and code release for visual authentication
 of genuine versus counterfeit gold items from ordinary smartphone photographs. It
 accompanies the paper:
@@ -112,6 +114,8 @@ texture-gate interpretability.
   doi     = {10.3390/a19070530}
 }
 ```
+
+This repository is archived on Zenodo: [10.5281/zenodo.21123708](https://doi.org/10.5281/zenodo.21123708).
 
 ## License
 
